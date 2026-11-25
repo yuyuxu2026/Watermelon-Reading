@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { BookOpen, ChevronLeft, FilePlus2, LibraryBig, Moon, MoreHorizontal, Sun, Trash2, Type, X } from 'lucide-react'
 import type { Book, Library, OpenBook, Position, Settings, TextBlock, Theme } from '../electron/types'
+import { blockBoxInContainer, positionFromScroll, targetScrollTop } from './reader-position'
 
 const formatProgress = (progress: number) => progress === 0 ? '未开始' : progress >= 0.995 ? '已读完' : `${Math.max(1, Math.round(progress * 100))}%`
 const dateLabel = (date: string | null) => date ? new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date(date)) : '尚未阅读'
@@ -14,8 +15,12 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
+  const [restoreToken, setRestoreToken] = useState(0)
   const readerRef = useRef<HTMLDivElement>(null)
   const saveTimer = useRef<number | undefined>(undefined)
+  const pendingRestore = useRef<Position | null>(null)
+  const loadedRef = useRef(0)
+  const loadingMore = useRef(false)
 
   const showError = useCallback((error: string) => { setMessage(error); window.setTimeout(() => setMessage(''), 4500) }, [])
   const refresh = useCallback(async () => {
@@ -26,13 +31,24 @@ function App() {
   }, [showError])
   useEffect(() => { void refresh() }, [refresh])
 
+  const scheduleRestore = (position: Position) => {
+    pendingRestore.current = position
+    setRestoreToken(token => token + 1)
+  }
+
   const openBook = async (id: string) => {
     const response = await window.reader.openBook(id)
     if (!response.ok) return showError(response.error)
-    setActive(response.data); setBlocks([]); setLoaded(0); setView('reader')
+    setActive(response.data); setBlocks([]); setLoaded(0); loadedRef.current = 0; setView('reader')
+    scheduleRestore(response.data.book.position)
     const count = Math.max(14, response.data.book.position.block + 15)
     const first = await window.reader.blocks(id, 0, Math.min(count, response.data.blocks.length))
-    if (!first.ok) return showError(first.error)
+    if (!first.ok) {
+      setView('shelf')
+      pendingRestore.current = null
+      return showError(first.error)
+    }
+    loadedRef.current = first.data.length
     setBlocks(first.data); setLoaded(first.data.length)
   }
 
@@ -43,44 +59,104 @@ function App() {
     await refresh(); await openBook(response.data.id)
   }
 
+  // Restore scroll only when opening a book or after font-size changes — never on every position save / loadMore.
   useEffect(() => {
-    if (!active || view !== 'reader' || !readerRef.current) return
-    const timer = window.setTimeout(() => { if (readerRef.current) readerRef.current.scrollTop = Math.max(0, active.book.position.block * 180 + active.book.position.fraction * 180) }, 80)
+    if (!pendingRestore.current || view !== 'reader' || !readerRef.current || blocks.length === 0) return
+    const position = pendingRestore.current
+    const timer = window.setTimeout(() => {
+      const container = readerRef.current
+      if (!container || !pendingRestore.current) return
+      const node = container.querySelector(`[data-block="${position.block}"]`) as HTMLElement | null
+      if (!node) return
+      container.scrollTop = targetScrollTop(blockBoxInContainer(node, container), position.fraction)
+      pendingRestore.current = null
+    }, 50)
     return () => window.clearTimeout(timer)
-  }, [active, view, blocks.length])
+  }, [blocks, view, restoreToken])
 
   const loadMore = async () => {
-    if (!active || loaded >= active.blocks.length) return
-    const response = await window.reader.blocks(active.book.id, loaded, 12)
-    if (!response.ok) return showError(response.error)
-    setBlocks(current => [...current, ...response.data]); setLoaded(loaded + response.data.length)
+    if (!active || loadingMore.current) return
+    const start = loadedRef.current
+    if (start >= active.blocks.length) return
+    loadingMore.current = true
+    try {
+      const response = await window.reader.blocks(active.book.id, start, 12)
+      if (!response.ok) return showError(response.error)
+      setBlocks(current => [...current, ...response.data])
+      loadedRef.current = start + response.data.length
+      setLoaded(loadedRef.current)
+    } finally {
+      loadingMore.current = false
+    }
+  }
+
+  const readPosition = (): Position | null => {
+    if (!readerRef.current) return null
+    const container = readerRef.current
+    return positionFromScroll(
+      blocks,
+      index => {
+        const node = container.querySelector(`[data-block="${index}"]`) as HTMLElement | null
+        return node ? blockBoxInContainer(node, container) : null
+      },
+      container.scrollTop
+    )
   }
 
   const savePosition = () => {
-    if (!active || !readerRef.current) return
-    const element = readerRef.current
-    const current = blocks.find(block => {
-      const node = document.querySelector(`[data-block="${block.index}"]`) as HTMLElement | null
-      return node && node.offsetTop + node.offsetHeight > element.scrollTop + 20
-    }) ?? blocks.at(-1)
-    if (!current) return
-    const node = document.querySelector(`[data-block="${current.index}"]`) as HTMLElement | null
-    const fraction = node ? Math.max(0, Math.min(1, (element.scrollTop - node.offsetTop) / Math.max(1, node.offsetHeight))) : 0
-    const position: Position = { block: current.index, fraction }
+    if (!active) return
+    const position = readPosition()
+    if (!position) return
     window.clearTimeout(saveTimer.current)
     saveTimer.current = window.setTimeout(async () => {
       const response = await window.reader.savePosition(active.book.id, position)
-      if (response.ok) { setActive(currentActive => currentActive ? { ...currentActive, book: response.data } : currentActive); setLibrary(currentLibrary => currentLibrary ? { ...currentLibrary, books: currentLibrary.books.map(book => book.id === response.data.id ? response.data : book) } : currentLibrary) }
+      if (response.ok) {
+        setActive(currentActive => currentActive ? { ...currentActive, book: response.data } : currentActive)
+        setLibrary(currentLibrary => currentLibrary
+          ? { ...currentLibrary, books: currentLibrary.books.map(book => book.id === response.data.id ? response.data : book) }
+          : currentLibrary)
+      }
     }, 350)
   }
 
-  const onScroll = () => { if (!readerRef.current) return; if (readerRef.current.scrollTop + readerRef.current.clientHeight > readerRef.current.scrollHeight - 900) void loadMore(); savePosition() }
-  const remove = async (book: Book) => { if (!window.confirm(`从书架移除“${book.title}”？`)) return; const response = await window.reader.removeBook(book.id); if (!response.ok) return showError(response.error); await refresh() }
-  const updateSettings = async (next: Settings) => { const response = await window.reader.saveSettings(next); if (!response.ok) return showError(response.error); setLibrary(current => current ? { ...current, settings: response.data } : current) }
+  const onScroll = () => {
+    if (!readerRef.current) return
+    if (readerRef.current.scrollTop + readerRef.current.clientHeight > readerRef.current.scrollHeight - 900) void loadMore()
+    savePosition()
+  }
+
+  const remove = async (book: Book) => {
+    if (!window.confirm(`从书架移除“${book.title}”？`)) return
+    const response = await window.reader.removeBook(book.id)
+    if (!response.ok) return showError(response.error)
+    await refresh()
+  }
+
+  const updateSettings = async (next: Settings) => {
+    if (active && view === 'reader') {
+      const position = readPosition()
+      if (position) scheduleRestore(position)
+    }
+    const response = await window.reader.saveSettings(next)
+    if (!response.ok) return showError(response.error)
+    setLibrary(current => current ? { ...current, settings: response.data } : current)
+  }
 
   if (loading || !library) return <div className="loading-screen"><div className="brand-mark">西</div><p>正在准备你的书架…</p></div>
   return <div className={`app theme-${library.settings.theme}`}>
-    {view === 'shelf' ? <Shelf books={library.books} onImport={importBook} onOpen={openBook} onRemove={remove} /> : <Reader active={active!} blocks={blocks} loaded={loaded} total={active!.blocks.length} settings={library.settings} readerRef={readerRef} onScroll={onScroll} onBack={() => { savePosition(); setView('shelf'); void refresh() }} onSettings={() => setSettingsOpen(true)} />}
+    {view === 'shelf'
+      ? <Shelf books={library.books} onImport={importBook} onOpen={openBook} onRemove={remove} />
+      : <Reader
+          active={active!}
+          blocks={blocks}
+          loaded={loaded}
+          total={active!.blocks.length}
+          settings={library.settings}
+          readerRef={readerRef}
+          onScroll={onScroll}
+          onBack={() => { savePosition(); setView('shelf'); void refresh() }}
+          onSettings={() => setSettingsOpen(true)}
+        />}
     {settingsOpen && <SettingsPanel settings={library.settings} onChange={updateSettings} onClose={() => setSettingsOpen(false)} />}
     {message && <div className="toast" role="alert">{message}<button onClick={() => setMessage('')}><X size={16} /></button></div>}
   </div>
