@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
+import { chaptersFromBlocks } from './chapters'
 import { blockInfo, decodeText, MAX_FILE_BYTES, splitText } from './text'
 import type { Book, Library, Position, Settings, OpenBook, TextBlock } from './types'
 
@@ -109,7 +110,12 @@ export class LibraryStore {
     const state = await this.load()
     const book = state.books.find(item => item.id === id)
     if (!book) throw new Error('书籍不存在，可能已从书架移除。')
-    return { book: structuredClone(book), blocks: blockInfo(await this.getBlocks(id)) }
+    const blocks = await this.getBlocks(id)
+    return {
+      book: structuredClone(book),
+      blocks: blockInfo(blocks),
+      chapters: chaptersFromBlocks(blocks)
+    }
   }
 
   async readBlocks(id: string, start: number, count: number): Promise<TextBlock[]> {

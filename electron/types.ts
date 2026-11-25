@@ -14,7 +14,8 @@ export interface Book {
 }
 export interface Library { books: Book[]; settings: Settings }
 export interface BlockInfo { start: number; length: number; lines: number }
-export interface OpenBook { book: Book; blocks: BlockInfo[] }
+export interface Chapter { index: number; title: string; start: number; block: number }
+export interface OpenBook { book: Book; blocks: BlockInfo[]; chapters: Chapter[] }
 export interface TextBlock { index: number; text: string }
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string }
 export interface ReaderApi {
