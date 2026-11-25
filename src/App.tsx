@@ -25,6 +25,11 @@ function App() {
   const showError = useCallback((error: string) => { setMessage(error); window.setTimeout(() => setMessage(''), 4500) }, [])
   const refresh = useCallback(async () => {
     setLoading(true)
+    if (!window.reader) {
+      showError('应用桥接未加载，请重启西瓜阅读。')
+      setLoading(false)
+      return
+    }
     const response = await window.reader.library()
     if (response.ok) setLibrary(response.data); else showError(response.error)
     setLoading(false)
@@ -142,7 +147,13 @@ function App() {
     setLibrary(current => current ? { ...current, settings: response.data } : current)
   }
 
-  if (loading || !library) return <div className="loading-screen"><div className="brand-mark">西</div><p>正在准备你的书架…</p></div>
+  if (loading || !library) {
+    return <div className="loading-screen">
+      <div className="brand-mark">西</div>
+      <p>{message || '正在准备你的书架…'}</p>
+      {message && <button className="primary-btn" onClick={() => void refresh()}>重试</button>}
+    </div>
+  }
   return <div className={`app theme-${library.settings.theme}`}>
     {view === 'shelf'
       ? <Shelf books={library.books} onImport={importBook} onOpen={openBook} onRemove={remove} />

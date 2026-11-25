@@ -27,7 +27,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
-    "electron": "^36.3.1",
+    "electron": "^36.9.5",
     "electron-builder": "^26.0.12",
     "lucide-react": "^0.468.0",
     "typescript": "^5.8.3",
@@ -38,9 +38,20 @@
   "build": {
     "appId": "com.watermelon.reader",
     "productName": "西瓜阅读",
-    "directories": { "output": "release" },
-    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
-    "win": { "target": "nsis" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

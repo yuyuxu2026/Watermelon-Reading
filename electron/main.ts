@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from 'electron'
 import path from 'node:path'
+import { contentSecurityPolicy } from './csp'
 import { LibraryStore } from './library'
-import type { ReaderApi, Result, Settings, Position } from './types'
+import type { Result, Settings, Position } from './types'
 
 let store: LibraryStore
 const isDev = process.argv.includes('--dev')
@@ -30,15 +31,37 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1240, height: 820, minWidth: 900, minHeight: 640,
     backgroundColor: '#f4f1ea',
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true }
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
   })
-  if (isDev) window.loadURL('http://127.0.0.1:5173')
-  else window.loadFile(path.join(__dirname, '../dist/index.html'))
+
+  window.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`Failed to load ${validatedURL}: [${errorCode}] ${errorDescription}`)
+  })
+  window.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error(`Preload failed (${preloadPath}):`, error)
+  })
+
+  if (isDev) {
+    if (process.env.ELECTRON_OPEN_DEVTOOLS === '1') window.webContents.openDevTools({ mode: 'detach' })
+    void window.loadURL('http://127.0.0.1:5173')
+  } else {
+    void window.loadFile(path.join(__dirname, '../dist/index.html'))
+  }
 }
 
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
-    callback({ responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': ["default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'"] } })
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [contentSecurityPolicy(isDev)]
+      }
+    })
   })
   store = new LibraryStore(path.join(app.getPath('userData'), 'library'))
   registerIpc()
