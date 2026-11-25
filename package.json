@@ -1,0 +1,46 @@
+{
+  "name": "watermelon-reader",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A focused local TXT ebook reader.",
+  "main": "dist-electron/main.js",
+  "scripts": {
+    "dev": "npm run build:electron && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron . --dev\"",
+    "build:electron": "tsc -p electron/tsconfig.json",
+    "build": "tsc -b && vite build && tsc -p electron/tsconfig.json",
+    "start": "electron .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dist": "npm run build && electron-builder --win nsis",
+    "verify:docs": "powershell -ExecutionPolicy Bypass -File tests/Verify-ProductDesign.ps1",
+    "verify": "npm run test && npm run verify:docs"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.13.0",
+    "iconv-lite": "^0.6.3",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "electron": "^36.3.1",
+    "electron-builder": "^26.0.12",
+    "lucide-react": "^0.468.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.3",
+    "vitest": "^3.1.2",
+    "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.watermelon.reader",
+    "productName": "西瓜阅读",
+    "directories": { "output": "release" },
+    "files": ["dist/**/*", "dist-electron/**/*", "package.json"],
+    "win": { "target": "nsis" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}
