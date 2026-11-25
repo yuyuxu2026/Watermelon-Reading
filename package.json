@@ -1,6 +1,6 @@
 {
   "name": "watermelon-reader",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "private": true,
   "description": "A focused local TXT ebook reader.",
   "main": "dist-electron/main.js",

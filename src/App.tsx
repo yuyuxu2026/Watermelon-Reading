@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, ChevronLeft, FilePlus2, LibraryBig, List, Moon, Sun, Trash2, Type, X } from 'lucide-react'
+import { BookOpen, FilePlus2, LibraryBig, Moon, Sun, Trash2, X } from 'lucide-react'
 import type { Book, Chapter, Library, OpenBook, Position, Settings, TextBlock, Theme } from '../electron/types'
 import { chapterIndexForBlock } from './chapter-nav'
-import { blockBoxInContainer, positionFromScroll, targetScrollTop } from './reader-position'
+import { ReaderView, type ReaderController } from './ReaderView'
 
 const formatProgress = (progress: number) => progress === 0 ? '未开始' : progress >= 0.995 ? '已读完' : `${Math.max(1, Math.round(progress * 100))}%`
 const dateLabel = (date: string | null) => date ? new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric' }).format(new Date(date)) : '尚未阅读'
@@ -18,7 +18,7 @@ function App() {
   const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
   const [restoreToken, setRestoreToken] = useState(0)
-  const readerRef = useRef<HTMLDivElement>(null)
+  const readerApi = useRef<ReaderController>(null)
   const saveTimer = useRef<number | undefined>(undefined)
   const pendingRestore = useRef<Position | null>(null)
   const loadedRef = useRef(0)
@@ -67,14 +67,12 @@ function App() {
   }
 
   useEffect(() => {
-    if (!pendingRestore.current || view !== 'reader' || !readerRef.current || blocks.length === 0) return
+    if (!pendingRestore.current || view !== 'reader' || blocks.length === 0) return
     const position = pendingRestore.current
+    if (!blocks.some(block => block.index === position.block)) return
     const timer = window.setTimeout(() => {
-      const container = readerRef.current
-      if (!container || !pendingRestore.current) return
-      const node = container.querySelector(`[data-block="${position.block}"]`) as HTMLElement | null
-      if (!node) return
-      container.scrollTop = targetScrollTop(blockBoxInContainer(node, container), position.fraction)
+      if (!pendingRestore.current) return
+      readerApi.current?.scrollTo(position)
       pendingRestore.current = null
     }, 50)
     return () => window.clearTimeout(timer)
@@ -117,24 +115,13 @@ function App() {
     if (start >= active.blocks.length) return
     loadingMore.current = true
     try {
-      await appendBlocks(start, Math.min(12, active.blocks.length - start))
+      await appendBlocks(start, Math.min(48, active.blocks.length - start))
     } finally {
       loadingMore.current = false
     }
   }
 
-  const readPosition = (): Position | null => {
-    if (!readerRef.current) return null
-    const container = readerRef.current
-    return positionFromScroll(
-      blocks,
-      index => {
-        const node = container.querySelector(`[data-block="${index}"]`) as HTMLElement | null
-        return node ? blockBoxInContainer(node, container) : null
-      },
-      container.scrollTop
-    )
-  }
+  const readPosition = (): Position | null => readerApi.current?.readPosition() ?? null
 
   const savePosition = () => {
     if (!active) return
@@ -170,11 +157,7 @@ function App() {
     }, 200)
   }
 
-  const onScroll = () => {
-    if (!readerRef.current) return
-    if (readerRef.current.scrollTop + readerRef.current.clientHeight > readerRef.current.scrollHeight - 900) void loadMore()
-    savePosition()
-  }
+  const onScroll = () => { savePosition() }
 
   const remove = async (book: Book) => {
     if (!window.confirm(`从书架移除“${book.title}”？`)) return
@@ -203,14 +186,15 @@ function App() {
   return <div className={`app theme-${library.settings.theme}`}>
     {view === 'shelf'
       ? <Shelf books={library.books} onImport={importBook} onOpen={openBook} onRemove={remove} />
-      : <Reader
+      : <ReaderView
+          ref={readerApi}
           active={active!}
           blocks={blocks}
           loaded={loaded}
           total={active!.blocks.length}
           settings={library.settings}
-          readerRef={readerRef}
           onScroll={onScroll}
+          onNeedMore={() => { void loadMore() }}
           onBack={() => { savePosition(); setTocOpen(false); setView('shelf'); void refresh() }}
           onSettings={() => { setTocOpen(false); setSettingsOpen(true) }}
           onToc={() => { setSettingsOpen(false); setTocOpen(true) }}
@@ -228,10 +212,6 @@ function App() {
 
 function Shelf({ books, onImport, onOpen, onRemove }: { books: Book[]; onImport: () => void; onOpen: (id: string) => void; onRemove: (book: Book) => void }) {
   return <main className="shelf-shell"><header className="topbar"><div className="brand"><span className="brand-mark small">西</span><div><strong>西瓜阅读</strong><small>你的安静阅读空间</small></div></div><button className="primary-btn" onClick={onImport}><FilePlus2 size={18} />导入 TXT</button></header><section className="shelf-content"><div className="eyebrow"><LibraryBig size={16} />我的书架</div><div className="shelf-heading"><div><h1>继续阅读</h1><p>{books.length ? `书架上有 ${books.length} 本书` : '从一本书开始你的阅读旅程'}</p></div></div>{books.length ? <div className="book-grid">{books.map(book => <article className="book-card" key={book.id} onClick={() => onOpen(book.id)}><div className="book-cover"><span>西瓜<br />阅读</span><i>TXT</i></div><div className="book-meta"><div className="book-title" title={book.title}>{book.title}</div><div className="book-file">{book.fileName}</div><div className="progress-line"><span style={{ width: `${Math.max(0, Math.min(100, book.progress * 100))}%` }} /></div><div className="book-bottom"><span>{formatProgress(book.progress)}</span><span>{dateLabel(book.lastReadAt)}</span><button className="icon-btn" aria-label={`移除 ${book.title}`} onClick={event => { event.stopPropagation(); void onRemove(book) }}><Trash2 size={15} /></button></div></div></article>)}</div> : <div className="empty-state"><div className="empty-icon"><BookOpen size={28} /></div><h2>书架还是空的</h2><p>导入一本 TXT 文件，开始你的第一段阅读。</p><button className="primary-btn" onClick={onImport}><FilePlus2 size={18} />选择 TXT 文件</button></div>}</section><footer className="shelf-footer"><span>本地阅读 · 无需登录</span><span>支持 UTF-8 / GBK / UTF-16</span></footer></main>
-}
-
-function Reader({ active, blocks, loaded, total, settings, readerRef, onScroll, onBack, onSettings, onToc }: { active: OpenBook; blocks: TextBlock[]; loaded: number; total: number; settings: Settings; readerRef: React.RefObject<HTMLDivElement | null>; onScroll: () => void; onBack: () => void; onSettings: () => void; onToc: () => void }) {
-  return <main className="reader-shell"><header className="reader-bar"><button className="back-btn" onClick={onBack}><ChevronLeft size={20} />书架</button><div className="reader-title"><strong>{active.book.title}</strong><span>{active.book.encoding} · {formatProgress(active.book.progress)}{active.chapters.length ? ` · ${active.chapters.length} 章` : ''}</span></div><div className="reader-actions"><span className="saved-label">自动保存</span><button className="icon-btn large" aria-label="章节目录" onClick={onToc}><List size={19} /></button><button className="icon-btn large" aria-label="阅读设置" onClick={onSettings}><Type size={19} /></button></div></header><div className="reader-progress"><span style={{ width: `${Math.max(0, Math.min(100, active.book.progress * 100))}%` }} /></div><div className="reading-viewport" ref={readerRef} onScroll={onScroll}><article className="reading-paper" style={{ '--reading-font-size': `${settings.fontSize}px` } as React.CSSProperties}>{blocks.map(block => <p key={block.index} data-block={block.index}>{block.text}</p>)}{loaded < total && <div className="load-hint">正在加载更多内容…</div>}{loaded >= total && <div className="end-hint">— 全文完 —</div>}</article></div></main>
 }
 
 function TocPanel({ chapters, currentBlock, onSelect, onClose }: { chapters: Chapter[]; currentBlock: number; onSelect: (chapter: Chapter) => void; onClose: () => void }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { positionFromScroll, targetScrollTop } from '../../src/reader-position'
+import { estimateBlockHeight, offsetForPosition, positionFromRanges, positionFromScroll, targetScrollTop } from '../../src/reader-position'
 
 describe('reader position helpers', () => {
   it('maps a block box and fraction to scrollTop', () => {
@@ -19,6 +19,25 @@ describe('reader position helpers', () => {
     expect(positionFromScroll(boxes, getBox, 0)).toEqual({ block: 0, fraction: 0 })
     expect(positionFromScroll(boxes, getBox, 150)).toEqual({ block: 1, fraction: 0.1 })
     expect(positionFromScroll(boxes, getBox, 500)).toEqual({ block: 2, fraction: 0.5 })
+  })
+
+  it('estimates taller blocks for longer text and larger type', () => {
+    const short = estimateBlockHeight('短句', 20, 740)
+    const long = estimateBlockHeight('甲'.repeat(400), 20, 740)
+    const larger = estimateBlockHeight('甲'.repeat(400), 32, 740)
+    expect(long).toBeGreaterThan(short)
+    expect(larger).toBeGreaterThan(long)
+  })
+
+  it('reads a position from virtual ranges and maps it back to an offset', () => {
+    const ranges = [
+      { index: 0, start: 0, size: 120 },
+      { index: 4, start: 120, size: 300 },
+      { index: 5, start: 420, size: 160 }
+    ]
+    expect(positionFromRanges(ranges, 150)).toEqual({ block: 4, fraction: 0.1 })
+    expect(offsetForPosition(ranges[1], 0.1)).toBe(150)
+    expect(positionFromRanges([], 0)).toBeNull()
   })
 
   it('falls back to the last loaded block when scrolled past all boxes', () => {
